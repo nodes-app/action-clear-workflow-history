@@ -1,0 +1,121 @@
+name: Clear Workflow History
+description: Clears Workflow Run History
+branding:
+  icon: x
+  color: gray-dark
+inputs:
+  repository:
+    description: Repository (defaults to current)
+    required: true
+    default: ${{ github.repository }}
+  workflows:
+    description: Workflow names (e.g. 'example.yml')
+    required: true
+  token:
+    description: GitHub Personal Access Token
+    required: true
+    default: ${{ github.token }}
+  
+runs:
+  using: composite
+  steps:
+
+    - name: Clear Workflow Run History
+      shell: bash
+      env:
+        REPOSITORY: ${{ inputs.repository }}
+        WORKFLOWS: ${{ inputs.workflows }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+      run: |
+        retry() {
+          local retries=$1
+          shift
+          local cmd="$@"
+          local i=0
+          local exit_code
+          local wait
+          until eval "$cmd"; do
+            exit_code=$?
+            i=$(($i + 1))
+            if [ $i -lt $retries ]; then
+              sleep $i
+            else
+              return $exit_code
+            fi
+          done
+          return 0
+        }
+
+        get_workflow_ids() {
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/$OWNER/$NAME/actions/workflows" \
+          | jq \
+            '
+            (
+              env.WORKFLOWS
+              | split("\n")
+              | 
+              [
+                .[]
+                | select(. != "")
+              ]
+            ) as $workflow_names
+            | 
+            [
+              .workflows[]
+              | select(
+                  .path
+                  | [ltrimstr(".github/workflows/")]
+                  | inside($workflow_names)
+                ).id
+            ]
+            '
+        }
+
+        get_run_ids() {
+          local ids='[]'
+          local page=1
+          local page_ids
+          local has_next_page=true
+          while $has_next_page; do
+            page_ids=$(
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                "/repos/$REPOSITORY/actions/workflows/$1/runs?per_page=100&status=completed&page=$page" \
+                --jq '[.workflow_runs[].id]'
+            )
+            if [ $(echo "$page_ids" | jq length) = 0 ]; then
+              has_next_page=false
+            else
+              ids=$(echo "$ids" | jq --argjson page_ids "$page_ids" '. += $page_ids')
+              ((page++))
+            fi
+          done
+          echo "$ids"
+        }
+
+        get_all_run_ids() {
+          local all_run_ids='[]'
+          local workflow_ids=$(get_workflow_ids)
+          local run_ids
+          local workflow_id
+          for (( i=0; i<$(echo "$workflow_ids" | jq length); i++ )); do
+            workflow_id=$(echo "$workflow_ids" | jq --argjson i $i '.[$i]')
+            run_ids=$(get_run_ids "$workflow_id")
+            all_run_ids=$(echo "$all_run_ids" | jq --argjson run_ids "$run_ids" '. += $run_ids')
+          done
+          echo "$all_run_ids"
+        }
+
+        delete_run() {
+          gh api \
+            --method DELETE \
+            -H "Accept: application/vnd.github.v3+json" \
+            "/repos/$OWNER/$NAME/actions/runs/$1"
+        }
+
+        run_ids=$(get_all_run_ids)
+        for (( i=0; i<$(echo "$run_ids" | jq length); i++ )); do
+          retry 5 delete_run "'$(echo "$run_ids" | jq --argjson i $i '.[$i]')'"
+        done
