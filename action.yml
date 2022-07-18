@@ -49,7 +49,7 @@ runs:
         get_workflow_ids() {
           gh api \
             -H "Accept: application/vnd.github+json" \
-            "/repos/$OWNER/$NAME/actions/workflows" \
+            "/repos/$REPOSITORY/actions/workflows" \
           | jq \
             '
             (
@@ -112,7 +112,7 @@ runs:
           gh api \
             --method DELETE \
             -H "Accept: application/vnd.github.v3+json" \
-            "/repos/$OWNER/$NAME/actions/runs/$1"
+            "/repos/$REPOSITORY/actions/runs/$1"
         }
 
         run_ids=$(get_all_run_ids)
