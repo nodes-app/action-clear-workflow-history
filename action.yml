@@ -9,8 +9,8 @@ inputs:
     required: true
     default: ${{ github.repository }}
   workflows:
-    description: Workflow names (e.g. 'example.yml')
-    required: true
+    description: Workflow names (e.g. 'example.yml'); defaults to all workflows if left unspecified
+    required: false
   token:
     description: GitHub Personal Access Token
     required: true
@@ -52,24 +52,29 @@ runs:
             "/repos/$REPOSITORY/actions/workflows" \
           | jq \
             '
-            (
-              env.WORKFLOWS
-              | split("\n")
+            if (env.WORKFLOWS == "") then (
+              .workflows 
+              | map(.id)
+            ) else (
+              (
+                env.WORKFLOWS
+                | split("\n")
+                | 
+                [
+                  .[]
+                  | select(. != "")
+                ]
+              ) as $workflow_names
               | 
               [
-                .[]
-                | select(. != "")
+                .workflows[]
+                | select(
+                    .path
+                    | [ltrimstr(".github/workflows/")]
+                    | inside($workflow_names)
+                  ).id
               ]
-            ) as $workflow_names
-            | 
-            [
-              .workflows[]
-              | select(
-                  .path
-                  | [ltrimstr(".github/workflows/")]
-                  | inside($workflow_names)
-                ).id
-            ]
+            ) end
             '
         }
 
